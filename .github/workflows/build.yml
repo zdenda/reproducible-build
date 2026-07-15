@@ -1,0 +1,84 @@
+name: Reproducible Cross-Platform Build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-linux-windows:
+    name: Build Linux (musl) + Windows (mingw) — cross-compiled in a pinned container
+    runs-on: ubuntu-latest
+    container:
+      # rust:1.97.0-slim (current newest stable, verified against Docker Hub on 2026-07-15),
+      # pinned by digest so the tag can't be silently repointed to a different image later.
+      image: rust:1.97.0-slim@sha256:466074ef42a9485c726d71017fa629f1954cd5e09b473dcd00467ddc6afdc753
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install cross toolchains
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-x86-64=14.2.0-17+27 \
+            musl-tools=1.2.5-3.1~deb13u1 \
+            ca-certificates=20250419
+
+      - name: Add targets
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          rustup target add x86_64-pc-windows-gnu
+
+      - name: Set reproducibility flags
+        run: echo "RUSTFLAGS=--remap-path-prefix=$GITHUB_WORKSPACE=." >> "$GITHUB_ENV"
+
+      - name: Build Linux (musl, fully static)
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+
+      - name: Build Windows (mingw)
+        env:
+          # --no-insert-timestamp: mingw's ld otherwise stamps the real build
+          # time into the PE header, which breaks byte-identical rebuilds.
+          # Scoped to this step only — the musl/ELF build's linker doesn't
+          # understand this flag and would fail if it were set job-wide.
+          RUSTFLAGS: ${{ env.RUSTFLAGS }} -C link-arg=-Wl,--no-insert-timestamp
+        run: cargo build --release --locked --target x86_64-pc-windows-gnu
+
+      - name: Upload Linux binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-tool-linux
+          path: target/x86_64-unknown-linux-musl/release/image-tool
+
+      - name: Upload Windows binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-tool-windows
+          path: target/x86_64-pc-windows-gnu/release/image-tool.exe
+
+  build-macos:
+    name: Build macOS (native runner, pinned Rust toolchain)
+    if: false   # temporarily disabled — re-enable by removing this line
+    runs-on: macos-13   # pinned version, not "macos-latest"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.0"
+          targets: x86_64-apple-darwin
+
+      - name: Set reproducibility flags
+        run: echo "RUSTFLAGS=--remap-path-prefix=$GITHUB_WORKSPACE=." >> "$GITHUB_ENV"
+
+      - name: Build macOS
+        run: cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Upload macOS binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-tool-macos
+          path: target/x86_64-apple-darwin/release/image-tool
