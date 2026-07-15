@@ -57,6 +57,27 @@ jobs:
           name: image-tool-windows
           path: target/x86_64-pc-windows-gnu/release/image-tool.exe
 
+      - name: Verify against recorded checksums
+        run: |
+          set -eu
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          BASELINE="checksums/${VERSION}/linux-windows.sha256sum"
+
+          mkdir -p verify
+          cp target/x86_64-unknown-linux-musl/release/image-tool verify/image-tool-linux
+          cp target/x86_64-pc-windows-gnu/release/image-tool.exe verify/image-tool-windows.exe
+          ( cd verify && ./image-tool-linux "#87CEEB" && mv image.png image-default.png )
+
+          if [ ! -f "$BASELINE" ]; then
+            echo "No recorded checksums for version $VERSION yet. Computed hashes:"
+            ( cd verify && sha256sum image-tool-linux image-tool-windows.exe image-default.png )
+            echo "If these look correct, commit them to $BASELINE to lock in this version's baseline."
+            exit 0
+          fi
+
+          cp "$BASELINE" verify/SHA256SUMS
+          ( cd verify && sha256sum -c SHA256SUMS )
+
   build-macos:
     name: Build macOS (native runner, pinned Rust toolchain)
     if: false   # temporarily disabled — re-enable by removing this line
@@ -82,3 +103,23 @@ jobs:
         with:
           name: image-tool-macos
           path: target/x86_64-apple-darwin/release/image-tool
+
+      - name: Verify against recorded checksums
+        run: |
+          set -eu
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          BASELINE="checksums/${VERSION}/macos.sha256sum"
+
+          mkdir -p verify
+          cp target/x86_64-apple-darwin/release/image-tool verify/image-tool-macos
+          ( cd verify && ./image-tool-macos "#87CEEB" && mv image.png image-default.png )
+
+          if [ ! -f "$BASELINE" ]; then
+            echo "No recorded checksums for version $VERSION (macOS) yet. Computed hashes:"
+            ( cd verify && shasum -a 256 image-tool-macos image-default.png )
+            echo "If these look correct, commit them to $BASELINE to lock in this version's baseline."
+            exit 0
+          fi
+
+          cp "$BASELINE" verify/SHA256SUMS
+          ( cd verify && shasum -a 256 -c SHA256SUMS )
